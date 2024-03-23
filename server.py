@@ -37,8 +37,8 @@ def run_server(handlers: typing.Dict):
         )
         return response
 
-    host = "0.0.0.0"
-    port = int(os.environ.get("PORT", "8000"))
+    host = "localhost"
+    port = int(os.environ.get("PORT", handlers["port"] if "port" in handlers else "8000"))
 
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
