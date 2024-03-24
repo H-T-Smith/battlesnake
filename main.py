@@ -2,14 +2,7 @@ import typing
 import copy
 import math
 import sys
-
-class TreeNode:
-    def __init__(self, state=None, eval=None, children=None, last_move=None):
-        self.state = state
-        self.eval = eval
-        self.children = children
-        self.last_move = last_move
-    
+import json
 
 # calculates basic distance from one point to another
 def calculate_distance(pos1, pos2):
@@ -55,8 +48,14 @@ def density_score(game_state, position, radius=2):
             if abs(segment['x'] - position['x']) <= radius and abs(segment['y'] - position['y']) <= radius:
                 sum += 1
         # count out-of-bounds squares in radius
-        if abs(position['x'] - game_state['board']['width']) <= radius:
-            sum += (radius + 1) * (radius - abs(position['x'] - game_state['board']['width']) + 1)
+        if game_state['board']['width'] - position['x'] <= radius:
+            sum += (2 * radius + 1) * (radius - (game_state['board']['width'] - position['x']) + 1)
+        if game_state['board']['height'] - position['y'] <= radius:
+            sum += (2 * radius + 1) * (radius - (game_state['board']['height'] - position['y']) + 1)
+        if position['x'] <= radius:
+            sum += (2 * radius + 1) * (radius - position['x'] + 1)
+        if position['y'] <= radius:
+            sum += (2 * radius + 1) * (radius - position['y'] + 1)
     area = (2 * radius + 1) ** 2
     return -sum / area
 
@@ -69,18 +68,42 @@ def food_score(game_state, position):
         sum += math.sqrt(calculate_distance(position, food_position))
     return -sum / len(food_positions)
 
+def head_on_score(game_state):
+    villain_snake_index = 1 if game_state['board']['snakes'][0]['id'] == game_state['you']['id'] else 0
+    villain_snake = game_state['board']['snakes'][villain_snake_index]
+    if (calculate_distance(game_state['you']['head'], villain_snake['head']) > 1
+        or game_state['you']['length'] == villain_snake['length']): return 0
+    if game_state['you']['length'] > villain_snake['length']: return 1
+    else: return -1
 
+def length_score(game_state):
+    hero_length = game_state['you']['length']
+    villain_snake_index = 1 if game_state['board']['snakes'][0]['id'] == game_state['you']['id'] else 0
+    villain_length = game_state['board']['snakes'][villain_snake_index]['length']
+    if hero_length > villain_length: return 1
+    if hero_length < villain_length: return -1
+    else: return 0
+
+
+def out_of_health(game_state, hero):
+    if hero:
+        return game_state['you']['health'] == 0
+    if not hero:
+        villain_snake_index = 1 if game_state['board']['snakes'][0]['id'] == game_state['you']['id'] else 0
+        return game_state['board']['snakes'][villain_snake_index]['health'] == 0
 
 # objective function considering nearby body density, closeness to food, and health
-        # weights: (food, density, health)
-def objective_function(game_state, hero, weights=(12,96,1)): # minimize the output
+        # weights: (food, density, health, head-on, length)
+def objective_function(game_state, hero, weights): # minimize the output
     villain_snake_index = 1 if game_state['board']['snakes'][0]['id'] == game_state['you']['id'] else 0
     villain_head = game_state['board']['snakes'][villain_snake_index]['head']
     villain_health = game_state['board']['snakes'][villain_snake_index]['health']
     # arbitrary weights for now, can be trained
     eval = (weights[0] * (food_score(game_state, game_state['you']['head']) - food_score(game_state, villain_head)) 
         + weights[1] * (density_score(game_state, game_state['you']['head']) - density_score(game_state, villain_head)) 
-        + weights[2] * (game_state['you']['health'] - villain_health))
+        + weights[2] * (game_state['you']['health'] - villain_health)
+        + weights[3] * (head_on_score(game_state))
+        + weights[4] * (length_score(game_state)))
     if not hero: eval *= -1
     return eval
 
@@ -100,7 +123,8 @@ def calculate_next_game_state(game_state, move, hero):
         if food == move:
             next_game_state['board']['food'].remove(food)
             snake['health'] = 100
-            next_game_state['you']['health'] = 100
+            if hero:
+                next_game_state['you']['health'] = 100
             # add tail
             snake['body'].append(snake['body'][-1])
             snake['length'] += 1
@@ -120,18 +144,18 @@ def calculate_next_game_state(game_state, move, hero):
 
     return next_game_state
     
-def miniMax(game_state, depth, hero):
+def miniMax(game_state, depth, hero, weights):
     if depth == 0:
-        return (objective_function(game_state, hero), None)
+        return (objective_function(game_state, hero, weights), None)
     safe_moves = determine_safe_moves(game_state, hero)
-    if not safe_moves:
+    if out_of_health(game_state, hero):
         return (float('-inf'), None) if hero else (float('inf'), None)
     if hero:
         value = float('-inf')
         best_move = None
         for move in safe_moves:
             new_state = calculate_next_game_state(game_state, move[1], True)
-            score = miniMax(new_state, depth-1, False)[0]
+            score = miniMax(new_state, depth-1, False, weights)[0]
             if score > value:
                 value = score
                 best_move = move
@@ -141,7 +165,7 @@ def miniMax(game_state, depth, hero):
         best_move = None
         for move in safe_moves:
             new_state = calculate_next_game_state(game_state, move[1], False)
-            score = miniMax(new_state, depth-1, True)[0]
+            score = miniMax(new_state, depth-1, True, weights)[0]
             if score < value:
                 value = score
                 best_move = move
@@ -150,7 +174,13 @@ def miniMax(game_state, depth, hero):
         
 
 def move(game_state: typing.Dict) -> typing.Dict:
-    res = miniMax(game_state, 5, True)
+    try:
+        with open('weights.json', 'r') as f:
+            weights = json.load(f)
+    except FileNotFoundError:
+        weights = None
+    weights = (12,96,8,50,40)
+    res = miniMax(game_state, 8, True, weights)
     print(res)
     return {"move": res[1][0]}
 
