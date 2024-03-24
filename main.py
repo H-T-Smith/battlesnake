@@ -38,7 +38,6 @@ def determine_safe_moves(game_state, hero):
             safe_moves.append(move)
     return safe_moves
 
-# TODO: use all snakes & obstacles instead of just self
 # calculates the density of the snake's body around a given position within a specified radius
 def density_score(game_state, position, radius=2):
     sum = 0
@@ -47,17 +46,16 @@ def density_score(game_state, position, radius=2):
         for segment in snake['body']:
             if abs(segment['x'] - position['x']) <= radius and abs(segment['y'] - position['y']) <= radius:
                 sum += 1
-        # count out-of-bounds squares in radius
-        if game_state['board']['width'] - position['x'] <= radius:
-            sum += (2 * radius + 1) * (radius - (game_state['board']['width'] - position['x']) + 1)
-        if game_state['board']['height'] - position['y'] <= radius:
-            sum += (2 * radius + 1) * (radius - (game_state['board']['height'] - position['y']) + 1)
-        if position['x'] <= radius:
-            sum += (2 * radius + 1) * (radius - position['x'] + 1)
-        if position['y'] <= radius:
-            sum += (2 * radius + 1) * (radius - position['y'] + 1)
-    area = (2 * radius + 1) ** 2
-    return -sum / area
+    # count out-of-bounds squares in radius
+    if game_state['board']['width'] - position['x'] <= radius:
+        sum += (2 * radius + 1) * (radius - (game_state['board']['width'] - position['x']) + 1)
+    if game_state['board']['height'] - position['y'] <= radius:
+        sum += (2 * radius + 1) * (radius - (game_state['board']['height'] - position['y']) + 1)
+    if position['x'] <= radius:
+        sum += (2 * radius + 1) * (radius - position['x'] + 1)
+    if position['y'] <= radius:
+        sum += (2 * radius + 1) * (radius - position['y'] + 1)
+    return -sum
 
 # food score based on distance to foods
 def food_score(game_state, position):
@@ -94,7 +92,7 @@ def out_of_health(game_state, hero):
 
 # objective function considering nearby body density, closeness to food, and health
         # weights: (food, density, health, head-on, length)
-def objective_function(game_state, hero, weights): # minimize the output
+def objective_function(game_state, weights): # minimize the output
     villain_snake_index = 1 if game_state['board']['snakes'][0]['id'] == game_state['you']['id'] else 0
     villain_head = game_state['board']['snakes'][villain_snake_index]['head']
     villain_health = game_state['board']['snakes'][villain_snake_index]['health']
@@ -104,7 +102,6 @@ def objective_function(game_state, hero, weights): # minimize the output
         + weights[2] * (game_state['you']['health'] - villain_health)
         + weights[3] * (head_on_score(game_state))
         + weights[4] * (length_score(game_state)))
-    if not hero: eval *= -1
     return eval
 
 # calculates next game state from given move
@@ -116,7 +113,17 @@ def calculate_next_game_state(game_state, move, hero):
     snake = next_game_state['board']['snakes'][hero_snake_index] if hero else next_game_state['board']['snakes'][villain_snake_index]
     # decrement health
     snake['health'] -= 1
-    next_game_state['you']['health'] -= 1
+    if hero:
+        next_game_state['you']['health'] -= 1
+    # update our snake position
+    snake['head'] = move
+    snake['body'].insert(0, move)
+    snake['body'].pop()
+    if hero:
+        # update 'you' snake position
+        next_game_state['you']['head'] = move
+        next_game_state['you']['body'].insert(0, move)
+        next_game_state['you']['body'].pop()
     # remove food & refill health & add tail if necessary
     for food in next_game_state['board']['food']:
         # if food was eaten
@@ -125,28 +132,18 @@ def calculate_next_game_state(game_state, move, hero):
             snake['health'] = 100
             if hero:
                 next_game_state['you']['health'] = 100
-            # add tail
+            # add tail (at -2 because the tail hasn't been deleted yet)
             snake['body'].append(snake['body'][-1])
             snake['length'] += 1
             if hero:
                 next_game_state['you']['body'].append(snake['body'][-1])
                 next_game_state['you']['length'] += 1
-    if hero:
-        # update our snake position
-        snake['head'] = move
-        snake['body'].insert(0, move)
-        snake['body'].pop()
-    if hero:
-        # update 'you' snake position
-        next_game_state['you']['head'] = move
-        next_game_state['you']['body'].insert(0, move)
-        next_game_state['you']['body'].pop()
 
     return next_game_state
     
 def miniMax(game_state, depth, hero, weights):
     if depth == 0:
-        return (objective_function(game_state, hero, weights), None)
+        return (objective_function(game_state, weights), None)
     safe_moves = determine_safe_moves(game_state, hero)
     if out_of_health(game_state, hero):
         return (float('-inf'), None) if hero else (float('inf'), None)
@@ -174,13 +171,9 @@ def miniMax(game_state, depth, hero, weights):
         
 
 def move(game_state: typing.Dict) -> typing.Dict:
-    try:
-        with open('weights.json', 'r') as f:
-            weights = json.load(f)
-    except FileNotFoundError:
-        weights = None
-    weights = (12,96,8,50,40)
-    res = miniMax(game_state, 8, True, weights)
+    with open('weights.json', 'r') as f:
+        weights = json.load(f)
+    res = miniMax(game_state, 7, True, weights)
     print(res)
     return {"move": res[1][0]}
 

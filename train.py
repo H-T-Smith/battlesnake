@@ -1,19 +1,20 @@
 import subprocess
-import time
+import math
 import json
 import random
 
 # Define file paths
-weights_file = 'weights.json'
+current_weights_file = 'weights.json'
+best_weights_file = 'best_weights.json'
 
-def run_games(weights, num_games=10):
+def run_games(num_games=10):
     win_count = 0
     loss_count = 0
     draw_count = 0
 
     for _ in range(num_games):
         # Construct command with weights
-        command = "./battlesnake play -W 11 -H 11 --name 'snake1' --url http://127.0.0.1:8000 --name 'snake2' --url http://127.0.0.1:8001 > output.txt 2>&1"
+        command = "./battlesnake play -W 11 -H 11 --name 'snake1' --url http://127.0.0.1:8000 --name 'snake2' --url http://127.0.0.1:8001"
 
         try:
             # Execute command
@@ -61,31 +62,33 @@ def extract_game_outcome(output):
 def calculate_win_loss_ratio(win_count, loss_count, draw_count):
     if win_count + loss_count == 0:
         return 0  # Avoid division by zero
-    return win_count + (draw_count / 2) / (win_count + loss_count + draw_count)
+    return (win_count + (draw_count / 2)) / (win_count + loss_count + draw_count)
 
-def save_weights(weights):
-    with open(weights_file, 'w') as f:
+def save_weights(weights, file):
+    with open(file, 'w') as f:
         json.dump(weights, f)
 
-def load_weights():
+def load_weights(file):
     try:
-        with open(weights_file, 'r') as f:
+        with open(file, 'r') as f:
             weights = json.load(f)
     except FileNotFoundError:
         weights = None
     return weights
 
-def hill_climbing(num_iterations=10, step_size=3, num_games_per_iteration=25):
-    current_weights = load_weights()
+
+def hill_climbing(num_iterations=100, step_size=50, num_games_per_iteration=20):
+    current_weights = load_weights(best_weights_file)
     best_score = float('-inf')
     best_weights = current_weights.copy()
 
     for _ in range(num_iterations):
         # Perturb weights
         new_weights = [weight + random.uniform(-step_size, step_size) for weight in current_weights]
+        save_weights(new_weights, current_weights_file)
 
         # Run games with new weights
-        win_count, loss_count, draw_count = run_games(new_weights, num_games=num_games_per_iteration)
+        win_count, loss_count, draw_count = run_games(num_games=num_games_per_iteration)
 
         # Calculate win/loss ratio
         win_loss_ratio = calculate_win_loss_ratio(win_count, loss_count, draw_count)
@@ -94,9 +97,7 @@ def hill_climbing(num_iterations=10, step_size=3, num_games_per_iteration=25):
         if win_loss_ratio > best_score:
             best_score = win_loss_ratio
             best_weights = new_weights
-
-        # Save best weights to file
-        save_weights(best_weights)
+            save_weights(new_weights, best_weights_file)
 
         # Print results
         print(f"Iteration {_+1}/{num_iterations}: Best Score: {best_score}, Best Weights: {best_weights}")
