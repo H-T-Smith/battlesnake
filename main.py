@@ -27,131 +27,132 @@ def is_position_safe(next_pos, game_state):
         return False
     # Check for collisions with snakes (including self)
     for snake in game_state['board']['snakes']:
-        if next_pos in snake['body'][:-1]:  # Exclude the tail since it will move
+        if next_pos in snake['body']:  # Exclude the tail since it will move, but not if that snake just ate
+            if next_pos == snake['body'][-1] and (snake['length'] == 1 or snake['body'][-2] != snake['body'][-1]):
+                return True
             return False
     return True
 
 # returns a list moves that don't immediately result in collision
-def determine_safe_moves(game_state):
+def determine_safe_moves(game_state, hero):
     head = game_state['you']['head']
+    if not hero:
+        villain_snake_index = 1 if game_state['board']['snakes'][0]['id'] == game_state['you']['id'] else 0
+        head = game_state['board']['snakes'][villain_snake_index]['head']
     safe_moves = []
     for move in get_possible_moves(head).items():
         if is_position_safe(move[1], game_state):
             safe_moves.append(move)
     return safe_moves
 
-# determines the last move based on the neck position
-def infer_last_move(my_body):
-    if len(my_body) < 2:
-        return None
-    head, neck = my_body[0], my_body[1]
-    if head['x'] > neck['x']:
-        return 'right'
-    elif head['x'] < neck['x']:
-        return 'left'
-    elif head['y'] > neck['y']:
-        return 'down'
-    else:
-        return 'up'
-
-# calculates the nearest food position
-def find_nearest_food(my_head, food):
-    if not food:
-        return None
-    return min(food, key=lambda x: calculate_distance(my_head, x))
-
-# returns a move that goes toward the target
-def move_towards_target(my_head, target, safe_moves):
-    if not target:
-        return None
-    moves = get_possible_moves(my_head)
-    return min(moves, key=calculate_distance(moves.get, target))
-
 # TODO: use all snakes & obstacles instead of just self
 # calculates the density of the snake's body around a given position within a specified radius
-def density_score(game_state, radius=2):
-    my_head = game_state['you']['head']
-    body_segments_nearby = sum(1 for segment in game_state['you']['body']
-                               if abs(segment['x'] - my_head['x']) <= radius and
-                               abs(segment['y'] - my_head['y']) <= radius)
+def density_score(game_state, position, radius=2):
+    sum = 0
+    for snake in game_state['board']['snakes']:
+        # count snake segments in radius
+        for segment in snake['body']:
+            if abs(segment['x'] - position['x']) <= radius and abs(segment['y'] - position['y']) <= radius:
+                sum += 1
+        # count out-of-bounds squares in radius
+        if abs(position['x'] - game_state['board']['width']) <= radius:
+            sum += (radius + 1) * (radius - abs(position['x'] - game_state['board']['width']) + 1)
     area = (2 * radius + 1) ** 2
-    return body_segments_nearby / area
+    return -sum / area
 
 # food score based on distance to foods
-def food_score(game_state):
+def food_score(game_state, position):
     food_positions = game_state['board']['food']
     if not food_positions: return 0
     sum = 0
     for food_position in food_positions:
-        sum += math.sqrt(calculate_distance(game_state['you']['head'], food_position))
-    return sum / len(food_positions)
+        sum += math.sqrt(calculate_distance(position, food_position))
+    return -sum / len(food_positions)
 
 
 
 # objective function considering nearby body density, closeness to food, and health
-def objective_function(game_state): # minimize the output
+        # weights: (food, density, health)
+def objective_function(game_state, hero, weights=(12,96,1)): # minimize the output
+    villain_snake_index = 1 if game_state['board']['snakes'][0]['id'] == game_state['you']['id'] else 0
+    villain_head = game_state['board']['snakes'][villain_snake_index]['head']
+    villain_health = game_state['board']['snakes'][villain_snake_index]['health']
     # arbitrary weights for now, can be trained
-    return 12 * food_score(game_state) + 96 * density_score(game_state) + 1 * (100 - game_state['you']['health'])
+    eval = (weights[0] * (food_score(game_state, game_state['you']['head']) - food_score(game_state, villain_head)) 
+        + weights[1] * (density_score(game_state, game_state['you']['head']) - density_score(game_state, villain_head)) 
+        + weights[2] * (game_state['you']['health'] - villain_health))
+    if not hero: eval *= -1
+    return eval
 
-# calculates next game state from given move + a bool if food was eaten
-def calculate_next_game_state(game_state, move):
+# calculates next game state from given move
+def calculate_next_game_state(game_state, move, hero):
     next_game_state = copy.deepcopy(game_state)
-    
-    # find our snake
-    for snake in next_game_state['board']['snakes']:
-        if snake['id'] == next_game_state['you']['id']:
-            # decrement health
-            snake['health'] -= 1
-            next_game_state['you']['health'] -= 1
-            # remove food & refill health & add tail if necessary
-            for food in next_game_state['board']['food']:
-                # if food was eaten
-                if food == move:
-                    next_game_state['board']['food'].remove(food)
-                    snake['health'] = 100
-                    next_game_state['you']['health'] = 100
-                    # add tail
-                    snake['body'].append(snake['body'][-1])
-                    snake['length'] += 1
-                    next_game_state['you']['body'].append(snake['body'][-1])
-                    next_game_state['you']['length'] += 1
-            # update our snake position
-            snake['head'] = move
-            snake['body'].insert(0, move)
-            snake['body'].pop()
-
-    # update our snake position
-    next_game_state['you']['head'] = move
-    next_game_state['you']['body'].insert(0, move)
-    next_game_state['you']['body'].pop()
+    # find snake
+    hero_snake_index = 0 if game_state['board']['snakes'][0]['id'] == game_state['you']['id'] else 1
+    villain_snake_index = 0 if hero_snake_index == 1 else 1
+    snake = next_game_state['board']['snakes'][hero_snake_index] if hero else next_game_state['board']['snakes'][villain_snake_index]
+    # decrement health
+    snake['health'] -= 1
+    next_game_state['you']['health'] -= 1
+    # remove food & refill health & add tail if necessary
+    for food in next_game_state['board']['food']:
+        # if food was eaten
+        if food == move:
+            next_game_state['board']['food'].remove(food)
+            snake['health'] = 100
+            next_game_state['you']['health'] = 100
+            # add tail
+            snake['body'].append(snake['body'][-1])
+            snake['length'] += 1
+            if hero:
+                next_game_state['you']['body'].append(snake['body'][-1])
+                next_game_state['you']['length'] += 1
+    if hero:
+        # update our snake position
+        snake['head'] = move
+        snake['body'].insert(0, move)
+        snake['body'].pop()
+    if hero:
+        # update 'you' snake position
+        next_game_state['you']['head'] = move
+        next_game_state['you']['body'].insert(0, move)
+        next_game_state['you']['body'].pop()
 
     return next_game_state
     
+def miniMax(game_state, depth, hero):
+    if depth == 0:
+        return (objective_function(game_state, hero), None)
+    safe_moves = determine_safe_moves(game_state, hero)
+    if not safe_moves:
+        return (float('-inf'), None) if hero else (float('inf'), None)
+    if hero:
+        value = float('-inf')
+        best_move = None
+        for move in safe_moves:
+            new_state = calculate_next_game_state(game_state, move[1], True)
+            score = miniMax(new_state, depth-1, False)[0]
+            if score > value:
+                value = score
+                best_move = move
+        return (value, best_move)
+    else:
+        value = float('inf')
+        best_move = None
+        for move in safe_moves:
+            new_state = calculate_next_game_state(game_state, move[1], False)
+            score = miniMax(new_state, depth-1, True)[0]
+            if score < value:
+                value = score
+                best_move = move
+        return (value, best_move)
 
-# builds the decision tree to analyze with 
-def build_tree(node: TreeNode, depth, max_depth, num_children):
-    # determine "good" moves
-    good_moves = determine_safe_moves(node.state)
-    good_moves.sort(key=lambda x: objective_function(calculate_next_game_state(node.state, x[1])))
-    good_moves = good_moves[:num_children] 
-    # if no safe moves
-    if not good_moves:
-        node.eval = float('inf')
-    if depth < max_depth or not good_moves:
-        # find children
-        node.children = [TreeNode(state=calculate_next_game_state(node.state, move[1]), eval = objective_function(calculate_next_game_state(node.state, move[1])), last_move=move[0]) for move in good_moves]
-        if len(node.children) > num_children:
-            node.children = node.children[:num_children]
-        for child in node.children:
-            # TODO: here is where we could implement minimax as we build the tree
-            build_tree(child, depth + 1, max_depth, num_children)
-    
+        
 
 def move(game_state: typing.Dict) -> typing.Dict:
-    root = TreeNode(state = game_state)
-    build_tree(root, 0, 3, 2)
-    best_child = min(root.children, key=lambda x: x.eval)
-    return {"move": best_child.last_move}
+    res = miniMax(game_state, 5, True)
+    print(res)
+    return {"move": res[1][0]}
 
 
 def info() -> typing.Dict:
