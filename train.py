@@ -4,8 +4,9 @@ import json
 import random
 
 # Define file paths
-current_weights_file = 'weights.json'
-best_weights_file = 'best_weights.json'
+snake1_weights_file = 'snake1_weights.json'
+snake2_weights_file = 'snake2_weights.json'
+current_weights_file = 'current_weights.json'
 
 def run_games(num_games=10):
     win_count = 0
@@ -77,33 +78,32 @@ def load_weights(file):
     return weights
 
 
-def hill_climbing(num_iterations=100, step_size=50, num_games_per_iteration=20):
-    current_weights = load_weights(best_weights_file)
-    best_score = float('-inf')
-    best_weights = current_weights.copy()
+def hill_climbing(num_iterations=100, step_size=50, num_games_per_iteration=10):
+    current_weights = load_weights(current_weights_file)
 
     for _ in range(num_iterations):
         # Perturb weights
-        new_weights = [weight + random.uniform(-step_size, step_size) for weight in current_weights]
-        save_weights(new_weights, current_weights_file)
+        snake1_weights = [weight + random.uniform(-step_size, step_size) for weight in current_weights]
+        snake2_weights = [weight + random.uniform(-step_size, step_size) for weight in current_weights]
+        save_weights(snake1_weights, snake1_weights_file)
+        save_weights(snake2_weights, snake2_weights_file)
 
         # Run games with new weights
         win_count, loss_count, draw_count = run_games(num_games=num_games_per_iteration)
+        win_count += draw_count / 2
+        loss_count += draw_count / 2
 
-        # Calculate win/loss ratio
-        win_loss_ratio = calculate_win_loss_ratio(win_count, loss_count, draw_count)
+        if not (win_count == 0 and loss_count == 0):
+            snake1_score = win_count**2 / (win_count**2 + loss_count**2)
+            snake2_score = 1 - snake1_score
+            # for each weight
+            for i in range(5):
+                current_weights[i] = ((snake1_weights[i] * snake1_score + snake2_weights[i] * snake2_score) + current_weights[i]) / 2
 
-        # Update weights if score improved
-        if win_loss_ratio > best_score:
-            best_score = win_loss_ratio
-            best_weights = new_weights
-            save_weights(new_weights, best_weights_file)
-
+        save_weights(current_weights, current_weights_file)
         # Print results
-        print(f"Iteration {_+1}/{num_iterations}: Best Score: {best_score}, Best Weights: {best_weights}")
-
-        # Update current weights
-        current_weights = best_weights.copy()
+        print(snake1_score)
+        print(f"Iteration {_+1}/{num_iterations}: Last Score: {win_count} - {loss_count}, Current Weights: {current_weights}")
 
 # Perform hill climbing
 hill_climbing()

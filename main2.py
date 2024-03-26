@@ -230,7 +230,7 @@ def move(game_state: typing.Dict) -> typing.Dict:
     if len(game_state['board']['snakes']) == 1:
         return {"move": "up"}
     
-    with open('snake1_weights.json', 'r') as f:
+    with open('snake2_weights.json', 'r') as f:
         weights = json.load(f)
 
     print(game_state['you']['latency'])
